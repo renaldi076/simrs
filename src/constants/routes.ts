@@ -1,0 +1,16 @@
+export const ROUTES = {
+  LOGIN: '/login',
+  DASHBOARD: '/dashboard',
+  REFERENSI: '/dashboard/referensi',
+  ADMISSION: '/dashboard/admission',
+  RME: '/dashboard/rme',
+  BILLING: '/dashboard/billing',
+  RADIOLOGI: '/dashboard/radiologi',
+  LABORATORIUM: '/dashboard/laboratorium',
+  FARMASI: '/dashboard/farmasi',
+  KASIR: '/dashboard/kasir',
+  KLAIM: '/dashboard/klaim',
+  JASA: '/dashboard/jasa',
+  PENGATURAN: '/dashboard/pengaturan',
+  BILLING_REAL: '/dashboard/billing-real',
+} as const;
