@@ -18,4 +18,4 @@ export interface SelectOption {
   label: string;
 }
 
-export type CardColorScheme = 'blue' | 'green' | 'purple' | 'orange' | 'red' | 'teal' | 'pink' | 'indigo' | 'amber' | 'cyan' | 'emerald' | 'rose';
+export type CardColorScheme = 'blue' | 'green' | 'purple' | 'orange' | 'red' | 'teal' | 'pink' | 'indigo' | 'amber' | 'cyan' | 'emerald' | 'rose' | 'slate';

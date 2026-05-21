@@ -3,7 +3,8 @@ export type UserRole = 'admin' | 'dokter' | 'perawat' | 'kasir' | 'apoteker' | '
 export type ModuleId = 
   | 'referensi' | 'admission' | 'rme' | 'billing' 
   | 'radiologi' | 'laboratorium' | 'farmasi' | 'kasir' 
-  | 'klaim' | 'jasa' | 'pengaturan' | 'billing-real';
+  | 'klaim' | 'jasa' | 'pengaturan' | 'billing-real'
+  | 'general-consent';
 
 export interface ModulePermission {
   moduleId: ModuleId;

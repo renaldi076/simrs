@@ -14,6 +14,7 @@ import {
   Award,
   Settings,
   Activity,
+  ClipboardCheck,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ const iconMap: Record<string, React.ComponentType<any>> = {
   Award,
   Settings,
   Activity,
+  ClipboardCheck,
 };
 
 interface SidebarProps {

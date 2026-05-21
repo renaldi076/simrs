@@ -24,4 +24,5 @@ export const COLOR_MAP: Record<string, { bg: string; text: string; hover: string
   cyan: { bg: 'bg-cyan-100', text: 'text-cyan-600', hover: 'hover:bg-cyan-50' },
   emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', hover: 'hover:bg-emerald-50' },
   rose: { bg: 'bg-rose-100', text: 'text-rose-600', hover: 'hover:bg-rose-50' },
+  slate: { bg: 'bg-slate-100', text: 'text-slate-600', hover: 'hover:bg-slate-50' },
 };

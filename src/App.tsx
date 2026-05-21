@@ -20,6 +20,7 @@ const Klaim = lazy(() => import('@/pages/klaim/index'));
 const Jasa = lazy(() => import('@/pages/jasa/index'));
 const Pengaturan = lazy(() => import('@/pages/pengaturan/index'));
 const BillingReal = lazy(() => import('@/pages/billing-real/index'));
+const GeneralConsent = lazy(() => import('@/pages/general-consent/index'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
 
 function App() {
@@ -57,6 +58,7 @@ function App() {
               <Route path="jasa" element={<Jasa />} />
               <Route path="pengaturan" element={<Pengaturan />} />
               <Route path="billing-real" element={<BillingReal />} />
+              <Route path="general-consent" element={<GeneralConsent />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -23,4 +23,5 @@ export const MODULES: ModuleConfig[] = [
   { id: 'jasa', label: 'Jasa', icon: 'Award', path: '/dashboard/jasa', colorScheme: 'cyan', description: 'Distribusi jasa medis' },
   { id: 'pengaturan', label: 'Pengaturan', icon: 'Settings', path: '/dashboard/pengaturan', colorScheme: 'rose', description: 'Konfigurasi sistem' },
   { id: 'billing-real', label: 'Billing Real', icon: 'Activity', path: '/dashboard/billing-real', colorScheme: 'red', description: 'Monitoring billing real-time' },
+  { id: 'general-consent', label: 'General Consent', icon: 'ClipboardCheck', path: '/dashboard/general-consent', colorScheme: 'slate', description: 'Formulir persetujuan umum' },
 ];

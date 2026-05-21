@@ -13,6 +13,7 @@ import {
   Award,
   Settings,
   Activity,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { MODULES } from '@/constants/modules';
@@ -31,6 +32,7 @@ const iconMap: Record<string, React.ComponentType<any>> = {
   Award,
   Settings,
   Activity,
+  ClipboardCheck,
 };
 
 export function Dashboard(): React.ReactElement {
