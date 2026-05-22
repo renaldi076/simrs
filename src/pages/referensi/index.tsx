@@ -17,6 +17,27 @@ import { Modal } from '@/components/ui/Modal';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { referensiService, type ReferensiItem } from '@/services/modules/referensiService';
+import {
+  AdmUnitView,
+  AdmSpesialistikView,
+  AdmDokterView,
+  AdmKelasRawatView,
+  AdmDiagnosaView,
+  AdmDiagnosaPrbView,
+  AdmProsedurView,
+  AdmCaraKeluarView,
+  AdmPascaPulangView,
+  AdmCobView,
+  AdmFaskesView,
+  AdmKelasAplicareView,
+  AdmJenisDaftarView,
+  AdmJenisPesertaView,
+  AdmStatusKecelakaanView,
+  AdmTindakLanjutView,
+  AdmDatangViaView,
+  AdmJadwalDokterView,
+} from './AdmissionSubMenus';
+import { TarifView, ObatView, TindakanView } from './ReferensiCustomViews';
 
 // --- Menu Structure Types ---
 interface MenuItem {
@@ -102,6 +123,14 @@ const MENU_ITEMS: MenuEntry[] = [
   { type: 'item', key: 'kelurahan', label: 'Kelurahan' },
   { type: 'item', key: 'bagian', label: 'Bagian' },
   { type: 'item', key: 'pangkat_2', label: 'Pangkat' },
+  { type: 'separator' },
+  { type: 'item', key: 'golongan_2', label: 'Golongan' },
+  { type: 'item', key: 'pendidikan_2', label: 'Pendidikan' },
+  { type: 'item', key: 'anggota', label: 'Anggota' },
+  { type: 'item', key: 'pdf', label: 'PDF' },
+  { type: 'item', key: 'profesi', label: 'Profesi' },
+  { type: 'item', key: 'diagnosa_perawat', label: 'Diagnosa Perawat' },
+  { type: 'item', key: 'dokumen_master', label: 'Dokumen Master' },
 ];
 
 // --- Alert State ---
@@ -191,6 +220,9 @@ function PasienView() {
   const [contactTab, setContactTab] = useState<'kontak' | 'alamat' | 'lainlain'>('kontak');
   const [alert, setAlert] = useState<AlertState | null>(null);
   const [currentRecord, setCurrentRecord] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const loadData = useCallback(() => {
     const items = referensiService.getAll('adm_pasien', search);
@@ -210,6 +242,22 @@ function PasienView() {
     const nextRM = referensiService.getNextRMNumber();
     setPatientForm({ ...INITIAL_PATIENT_FORM, noRM: nextRM });
     setContactTab('kontak');
+    setEditMode(false);
+    setShowAddModal(true);
+  }
+
+  function openEditModal() {
+    const item = data.find(d => d.id === selectedId);
+    if (!item) { setAlert({ type: 'warning', message: 'Pilih data pasien terlebih dahulu.' }); return; }
+    setPatientForm({
+      ...INITIAL_PATIENT_FORM,
+      noRM: item.kode,
+      tampilanNama: item.nama,
+      aktif: item.isActive,
+      ...(item.extra || {}),
+    });
+    setContactTab('kontak');
+    setEditMode(true);
     setShowAddModal(true);
   }
 
@@ -222,21 +270,36 @@ function PasienView() {
       setAlert({ type: 'error', message: 'Tampilan Nama wajib diisi.' });
       return;
     }
-    referensiService.create('adm_pasien', {
-      kode: patientForm.noRM,
-      nama: patientForm.tampilanNama.toUpperCase(),
-      isActive: patientForm.aktif,
-    });
-    setAlert({ type: 'success', message: 'Data pasien berhasil ditambahkan.' });
+    if (editMode && selectedId) {
+      referensiService.update('adm_pasien', selectedId, {
+        kode: patientForm.noRM,
+        nama: patientForm.tampilanNama.toUpperCase(),
+        isActive: patientForm.aktif,
+      });
+      setAlert({ type: 'success', message: 'Data pasien berhasil diperbarui.' });
+    } else {
+      referensiService.create('adm_pasien', {
+        kode: patientForm.noRM,
+        nama: patientForm.tampilanNama.toUpperCase(),
+        isActive: patientForm.aktif,
+      });
+      setAlert({ type: 'success', message: 'Data pasien berhasil ditambahkan.' });
+    }
     setShowAddModal(false);
     loadData();
   }
 
   function handleDelete() {
-    if (data.length === 0) return;
-    const item = data[0];
-    referensiService.remove('adm_pasien', item.id);
+    if (!selectedId) { setAlert({ type: 'warning', message: 'Pilih data pasien terlebih dahulu.' }); return; }
+    setDeleteConfirmId(selectedId);
+  }
+
+  function confirmDelete() {
+    if (!deleteConfirmId) return;
+    referensiService.remove('adm_pasien', deleteConfirmId);
     setAlert({ type: 'success', message: 'Data berhasil dihapus.' });
+    setDeleteConfirmId(null);
+    setSelectedId(null);
     loadData();
   }
 
@@ -246,7 +309,7 @@ function PasienView() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <button onClick={openAddModal} className="p-1.5 hover:bg-blue-100 rounded text-blue-600" title="Tambah"><Plus size={18} /></button>
-          <button className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600" title="Edit"><Pencil size={18} /></button>
+          <button onClick={openEditModal} className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600" title="Edit"><Pencil size={18} /></button>
           <button onClick={handleDelete} className="p-1.5 hover:bg-red-100 rounded text-red-600" title="Hapus"><Trash2 size={18} /></button>
           <button className="p-1.5 hover:bg-green-100 rounded text-green-600" title="Cetak"><Printer size={18} /></button>
           <button onClick={loadData} className="p-1.5 hover:bg-cyan-100 rounded text-cyan-600" title="Refresh"><RefreshCw size={18} /></button>
@@ -290,7 +353,11 @@ function PasienView() {
               <tr><td colSpan={2} className="px-4 py-8 text-center text-sm text-gray-500">Tidak ada data</td></tr>
             ) : (
               data.map((item, idx) => (
-                <tr key={item.id} className={idx % 2 === 1 ? 'bg-gray-50' : ''}>
+                <tr
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  className={`cursor-pointer ${selectedId === item.id ? 'bg-blue-100' : idx % 2 === 1 ? 'bg-gray-50' : ''} hover:bg-blue-50`}
+                >
                   <td className="px-4 py-2 text-sm text-gray-700">{item.kode}</td>
                   <td className="px-4 py-2 text-sm text-gray-700">{item.nama}</td>
                 </tr>
@@ -312,7 +379,7 @@ function PasienView() {
       <Modal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        title="Tambah Pasien"
+        title={editMode ? 'Edit Pasien' : 'Tambah Pasien'}
         size="full"
       >
         <div className="max-h-[70vh] overflow-y-auto">
@@ -583,6 +650,17 @@ function PasienView() {
           </div>
         </div>
       </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal isOpen={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="Konfirmasi Hapus" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Apakah Anda yakin ingin menghapus data pasien ini?</p>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Batal</Button>
+            <Button variant="danger" onClick={confirmDelete}>Hapus</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -795,6 +873,59 @@ export default function ReferensiPage(): React.ReactElement {
             <h1 className="text-xl font-bold text-gray-900">Pasien</h1>
             <PasienView />
           </div>
+        </div>
+      );
+    }
+
+    // Custom admission sub-menu views
+    const admissionViews: Record<string, React.ReactNode> = {
+      adm_unit: <AdmUnitView />,
+      adm_spesialistik: <AdmSpesialistikView />,
+      adm_dokter: <AdmDokterView />,
+      adm_kelas_rawat: <AdmKelasRawatView />,
+      adm_diagnosa: <AdmDiagnosaView />,
+      adm_diagnosa_prb: <AdmDiagnosaPrbView />,
+      adm_prosedur: <AdmProsedurView />,
+      adm_cara_keluar: <AdmCaraKeluarView />,
+      adm_pasca_pulang: <AdmPascaPulangView />,
+      adm_cob: <AdmCobView />,
+      adm_faskes: <AdmFaskesView />,
+      adm_kelas_aplicare: <AdmKelasAplicareView />,
+      adm_jenis_daftar: <AdmJenisDaftarView />,
+      adm_jenis_peserta: <AdmJenisPesertaView />,
+      adm_status_kecelakaan: <AdmStatusKecelakaanView />,
+      adm_tindak_lanjut: <AdmTindakLanjutView />,
+      adm_datang_via: <AdmDatangViaView />,
+      adm_jadwal_dokter: <AdmJadwalDokterView />,
+    };
+
+    if (admissionViews[activeKey]) {
+      return (
+        <div className="flex-1 p-6 overflow-y-auto">
+          {admissionViews[activeKey]}
+        </div>
+      );
+    }
+
+    // Custom views for Tarif, Obat, Tindakan
+    if (activeKey === 'tarif') {
+      return (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <TarifView />
+        </div>
+      );
+    }
+    if (activeKey === 'obat') {
+      return (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <ObatView />
+        </div>
+      );
+    }
+    if (activeKey === 'tindakan') {
+      return (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <TindakanView />
         </div>
       );
     }

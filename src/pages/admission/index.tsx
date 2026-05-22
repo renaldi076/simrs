@@ -16,6 +16,7 @@ import {
   Monitor,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import { storageService } from '@/services/storageService';
 import { generateId } from '@/utils/formatters';
 
@@ -124,7 +125,12 @@ function getSeedData(): PendaftaranRecord[] {
 function initializePendaftaran(): PendaftaranRecord[] {
   const existing = storageService.get<PendaftaranRecord[]>(STORAGE_KEY);
   if (existing && existing.length > 0) return existing;
-  const seed = getSeedData();
+  // Use today's date for seed data so it shows in the default date filter
+  const today = new Date().toISOString().split('T')[0];
+  const seed = getSeedData().map(r => ({
+    ...r,
+    tanggalDatang: r.tanggalDatang.replace('2026-05-20', today),
+  }));
   storageService.set(STORAGE_KEY, seed);
   return seed;
 }
@@ -146,23 +152,42 @@ function PendaftaranContent() {
   const [data, setData] = useState<PendaftaranRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [editingRecord, setEditingRecord] = useState<PendaftaranRecord | null>(null);
-  const [fromDate, setFromDate] = useState('2026-05-20');
-  const [toDate, setToDate] = useState('2026-05-20');
+  const [fromDate, setFromDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
-  // Form state
+  // Full form state
   const [formNama, setFormNama] = useState('');
+  const [formRekamMedis, setFormRekamMedis] = useState('');
   const [formJenisDaftar, setFormJenisDaftar] = useState('BPJS');
   const [formJenisPeserta, setFormJenisPeserta] = useState('PEKERJA PENERIMA UPAH');
+  const [formNoSEP, setFormNoSEP] = useState('-');
+  const [formNoSKD, setFormNoSKD] = useState('-');
+  const [formPoliRuangan, setFormPoliRuangan] = useState('Poli Penyakit Dalam');
   const [formDokter, setFormDokter] = useState('dr. Hendra Sp.PD');
-  const [formTujuan, setFormTujuan] = useState('Poli Penyakit Dalam');
+  const [formStatusKecelakaan, setFormStatusKecelakaan] = useState('BUKAN KECELAKAAN');
+  const [formTindakLanjut, setFormTindakLanjut] = useState('-');
+  const [formDatangVia, setFormDatangVia] = useState('LANGSUNG');
+  const [formL6, setFormL6] = useState('-');
+  const [formTujuanKunjungan, setFormTujuanKunjungan] = useState('Konsultasi');
+  const [formStatusDaftar, setFormStatusDaftar] = useState('Terdaftar');
 
   const loadData = useCallback(() => {
-    const all = initializePendaftaran();
+    let all = storageService.get<PendaftaranRecord[]>(STORAGE_KEY) || [];
+    if (all.length === 0) {
+      all = initializePendaftaran();
+    }
     let filtered = all;
 
-    // Filter by date range
+    // Filter by date range (only if both dates are set)
     if (fromDate && toDate) {
       const from = new Date(fromDate);
       from.setHours(0, 0, 0, 0);
@@ -184,6 +209,9 @@ function PendaftaranContent() {
       );
     }
 
+    // Sort by tanggal descending (newest first)
+    filtered.sort((a, b) => new Date(b.tanggalDatang).getTime() - new Date(a.tanggalDatang).getTime());
+
     setData(filtered);
   }, [search, fromDate, toDate]);
 
@@ -191,79 +219,126 @@ function PendaftaranContent() {
 
   const selectedRecord = data.find(r => r.id === selectedId) || null;
 
-  function handleAdd() {
-    setEditingRecord(null);
+  function resetForm() {
     setFormNama('');
+    setFormRekamMedis('');
     setFormJenisDaftar('BPJS');
     setFormJenisPeserta('PEKERJA PENERIMA UPAH');
+    setFormNoSEP('-');
+    setFormNoSKD('-');
+    setFormPoliRuangan('Poli Penyakit Dalam');
     setFormDokter('dr. Hendra Sp.PD');
-    setFormTujuan('Poli Penyakit Dalam');
-    setShowAddForm(true);
+    setFormStatusKecelakaan('BUKAN KECELAKAAN');
+    setFormTindakLanjut('-');
+    setFormDatangVia('LANGSUNG');
+    setFormL6('-');
+    setFormTujuanKunjungan('Konsultasi');
+    setFormStatusDaftar('Terdaftar');
+  }
+
+  function handleAdd() {
+    setEditingRecord(null);
+    resetForm();
+    setShowModal(true);
   }
 
   function handleEdit() {
     if (!selectedRecord) return;
     setEditingRecord(selectedRecord);
     setFormNama(selectedRecord.tampilanNama);
+    setFormRekamMedis(selectedRecord.rekamMedis);
     setFormJenisDaftar(selectedRecord.jenisDaftar);
     setFormJenisPeserta(selectedRecord.jenisPeserta);
+    setFormNoSEP(selectedRecord.noSEP);
+    setFormNoSKD(selectedRecord.noSKD);
+    setFormPoliRuangan(selectedRecord.poliRuangan);
     setFormDokter(selectedRecord.dokter);
-    setFormTujuan(selectedRecord.tujuan);
-    setShowAddForm(true);
+    setFormStatusKecelakaan(selectedRecord.statusKecelakaan);
+    setFormTindakLanjut(selectedRecord.tindakLanjut);
+    setFormDatangVia(selectedRecord.datangVia);
+    setFormL6(selectedRecord.l6);
+    setFormTujuanKunjungan(selectedRecord.tujuanKunjungan);
+    setFormStatusDaftar(selectedRecord.statusDaftar);
+    setShowModal(true);
   }
 
-  function handleSubmitAdd(e: React.FormEvent) {
-    e.preventDefault();
+  function handleSubmit() {
     if (!formNama.trim()) return;
     const all = storageService.get<PendaftaranRecord[]>(STORAGE_KEY) || [];
 
     if (editingRecord) {
-      // Edit mode
+      // Edit: update ALL fields of the selected record
       const idx = all.findIndex(r => r.id === editingRecord.id);
       if (idx !== -1) {
-        all[idx] = { ...all[idx], tampilanNama: formNama.toUpperCase(), jenisDaftar: formJenisDaftar, jenisPeserta: formJenisPeserta, dokter: formDokter, tujuan: formTujuan, poliRuangan: formTujuan };
+        all[idx] = {
+          ...all[idx],
+          tampilanNama: formNama.toUpperCase(),
+          rekamMedis: formRekamMedis || all[idx].rekamMedis,
+          jenisDaftar: formJenisDaftar,
+          jenisPeserta: formJenisPeserta,
+          noSEP: formNoSEP,
+          noSKD: formNoSKD,
+          poliRuangan: formPoliRuangan,
+          dokter: formDokter,
+          statusKecelakaan: formStatusKecelakaan,
+          tindakLanjut: formTindakLanjut,
+          datangVia: formDatangVia,
+          l6: formL6,
+          tujuanKunjungan: formTujuanKunjungan,
+          tujuan: formPoliRuangan,
+          statusDaftar: formStatusDaftar,
+          userPendaftaran: all[idx].userPendaftaran,
+        };
         storageService.set(STORAGE_KEY, all);
       }
     } else {
-      // Add mode
+      // Add: create new record with today's date so it appears in current filter
       const nextNum = all.length + 1;
+      const now = new Date();
+      // Set tanggalDatang to match current fromDate filter so it shows up
+      const tanggal = fromDate ? `${fromDate}T${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:00` : now.toISOString();
       const newRecord: PendaftaranRecord = {
         id: generateId(),
         nomorPendaftaran: `RJ2026E${String(nextNum + 8082).padStart(6, '0')}`,
-        tanggalDatang: new Date().toISOString(),
+        tanggalDatang: tanggal,
         jenisDaftar: formJenisDaftar,
         jenisPeserta: formJenisPeserta,
-        statusKecelakaan: 'BUKAN KECELAKAAN',
-        tindakLanjut: '-',
-        datangVia: 'LANGSUNG',
-        l6: '-',
-        rekamMedis: String(271690 + nextNum).padStart(9, '0'),
+        statusKecelakaan: formStatusKecelakaan,
+        tindakLanjut: formTindakLanjut,
+        datangVia: formDatangVia,
+        l6: formL6,
+        rekamMedis: formRekamMedis || String(271690 + nextNum).padStart(9, '0'),
         tampilanNama: formNama.toUpperCase(),
         dokter: formDokter,
-        tujuan: formTujuan,
-        poliRuangan: formTujuan,
-        noSEP: '-',
-        noSKD: '-',
-        tujuanKunjungan: 'Konsultasi',
+        tujuan: formPoliRuangan,
+        poliRuangan: formPoliRuangan,
+        noSEP: formNoSEP,
+        noSKD: formNoSKD,
+        tujuanKunjungan: formTujuanKunjungan,
         userPendaftaran: 'ADM_USER',
-        statusDaftar: 'Terdaftar',
+        statusDaftar: formStatusDaftar,
       };
       all.unshift(newRecord);
       storageService.set(STORAGE_KEY, all);
     }
 
-    setShowAddForm(false);
+    setShowModal(false);
     setEditingRecord(null);
-    setFormNama('');
     loadData();
   }
 
   function handleDelete() {
     if (!selectedId) return;
+    setDeleteConfirmOpen(true);
+  }
+
+  function confirmDelete() {
+    if (!selectedId) return;
     const all = storageService.get<PendaftaranRecord[]>(STORAGE_KEY) || [];
     const filtered = all.filter(r => r.id !== selectedId);
     storageService.set(STORAGE_KEY, filtered);
     setSelectedId(null);
+    setDeleteConfirmOpen(false);
     loadData();
   }
 
@@ -273,7 +348,20 @@ function PendaftaranContent() {
 
   function handleOperasi() {
     if (!selectedRecord) return;
-    alert(`Operasi untuk pasien: ${selectedRecord.tampilanNama}\nNo. Pendaftaran: ${selectedRecord.nomorPendaftaran}`);
+    alert(`Fitur operasi untuk pasien: ${selectedRecord.tampilanNama}`);
+  }
+
+  function handleCetak() {
+    window.print();
+  }
+
+  function handleBatal() {
+    if (showModal) {
+      setShowModal(false);
+      setEditingRecord(null);
+    } else {
+      setSelectedId(null);
+    }
   }
 
   return (
@@ -287,11 +375,11 @@ function PendaftaranContent() {
             <div className="flex items-center gap-2">
               <button onClick={handleAdd} className="p-2 hover:bg-blue-100 rounded text-blue-600 border border-transparent hover:border-blue-300" title="Tambah"><Plus size={20} /></button>
               <button onClick={handleEdit} className="p-2 hover:bg-yellow-100 rounded text-yellow-600 border border-transparent hover:border-yellow-300" title="Edit"><Pencil size={20} /></button>
-              <button className="p-2 hover:bg-green-100 rounded text-green-600 border border-transparent hover:border-green-300" title="Cetak"><Printer size={20} /></button>
+              <button onClick={handleCetak} className="p-2 hover:bg-green-100 rounded text-green-600 border border-transparent hover:border-green-300" title="Cetak"><Printer size={20} /></button>
               <button onClick={handleRefresh} className="p-2 hover:bg-cyan-100 rounded text-cyan-600 border border-transparent hover:border-cyan-300" title="Refresh"><RefreshCw size={20} /></button>
               <button onClick={handleOperasi} className="p-2 hover:bg-purple-100 rounded text-purple-600 border border-transparent hover:border-purple-300" title="Operasi"><ClipboardList size={20} /></button>
               <button onClick={handleDelete} className="p-2 hover:bg-red-100 rounded text-red-600 border border-transparent hover:border-red-300" title="Hapus"><Trash2 size={20} /></button>
-              <button className="p-2 hover:bg-gray-200 rounded text-gray-600 border border-transparent hover:border-gray-400" title="Batal"><XCircle size={20} /></button>
+              <button onClick={handleBatal} className="p-2 hover:bg-gray-200 rounded text-gray-600 border border-transparent hover:border-gray-400" title="Batal"><XCircle size={20} /></button>
               <div className="ml-3 flex items-center gap-2 text-xs">
                 <span className="text-gray-600 font-medium">Dari Tanggal:</span>
                 <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-xs" />
@@ -347,43 +435,115 @@ function PendaftaranContent() {
         <button onClick={() => setSearch('')} className="px-3 py-1.5 text-xs border border-gray-300 rounded hover:bg-gray-100">Clear</button>
       </div>
 
-      {/* Add/Edit form overlay */}
-      {showAddForm && (
-        <div className="px-3 py-3 bg-blue-50 border-b border-blue-200">
-          <form onSubmit={handleSubmitAdd} className="flex flex-wrap items-end gap-3">
+      {/* Add/Edit Modal */}
+      <Modal
+        isOpen={showModal}
+        onClose={() => { setShowModal(false); setEditingRecord(null); }}
+        title={editingRecord ? `Edit Pendaftaran - ${editingRecord.nomorPendaftaran}` : 'Tambah Pendaftaran'}
+        size="2xl"
+      >
+        <div className="max-h-[70vh] overflow-y-auto space-y-4">
+          {editingRecord && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700 w-40 shrink-0">No. Pendaftaran</label>
+              <input value={editingRecord.nomorPendaftaran} readOnly className="border border-gray-300 rounded px-3 py-2 text-sm bg-gray-100 flex-1" />
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-gray-600 block mb-1">{editingRecord ? 'Edit' : 'Tambah'} - Nama Pasien *</label>
-              <input value={formNama} onChange={e => setFormNama(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-xs w-44" required />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nama Pasien *</label>
+              <input value={formNama} onChange={e => setFormNama(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" required />
             </div>
             <div>
-              <label className="text-xs text-gray-600 block mb-1">Jenis Daftar</label>
-              <select value={formJenisDaftar} onChange={e => setFormJenisDaftar(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+              <label className="block text-sm font-medium text-gray-700 mb-1">No. Rekam Medis</label>
+              <input value={formRekamMedis} onChange={e => setFormRekamMedis(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" placeholder="Auto-generated jika kosong" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Daftar</label>
+              <select value={formJenisDaftar} onChange={e => setFormJenisDaftar(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                 <option>BPJS</option><option>UMUM</option><option>ASURANSI</option>
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-600 block mb-1">Jenis Peserta</label>
-              <select value={formJenisPeserta} onChange={e => setFormJenisPeserta(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Peserta</label>
+              <select value={formJenisPeserta} onChange={e => setFormJenisPeserta(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                 <option>PEKERJA PENERIMA UPAH</option><option>PEGAWAI PEMERINTAH DENGAN PERJANJIAN KERJA</option><option>PEKERJA MANDIRI</option><option>PBI (APBN)</option><option>PBI (APBD)</option><option>VETERAN</option><option>PNS PUSAT</option><option>PEGAWAI SWASTA</option><option>-</option>
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-600 block mb-1">DPJP / Dokter</label>
-              <select value={formDokter} onChange={e => setFormDokter(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+              <label className="block text-sm font-medium text-gray-700 mb-1">No. SEP</label>
+              <input value={formNoSEP} onChange={e => setFormNoSEP(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">No. SKD</label>
+              <input value={formNoSKD} onChange={e => setFormNoSKD(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Poli / Ruangan</label>
+              <select value={formPoliRuangan} onChange={e => setFormPoliRuangan(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                <option>Poli Penyakit Dalam</option><option>Poli Kandungan</option><option>Poli Anak</option><option>Poli Jantung</option><option>Poli Bedah</option><option>Poli Orthopedi</option><option>Poli Urologi</option><option>IGD</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">DPJP / Dokter</label>
+              <select value={formDokter} onChange={e => setFormDokter(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
                 <option>dr. Hendra Sp.PD</option><option>dr. Sari Sp.OG</option><option>dr. Ahmad Sp.A</option><option>dr. Budi Sp.JP</option><option>dr. Wati Sp.B</option><option>dr. ABDURRAHMAN, Sp.OT</option><option>dr. MOCHAMMAD ECKY PRATAMA, Sp.U</option>
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-600 block mb-1">Poli/Tujuan</label>
-              <select value={formTujuan} onChange={e => setFormTujuan(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-xs">
-                <option>Poli Penyakit Dalam</option><option>Poli Kandungan</option><option>Poli Anak</option><option>Poli Jantung</option><option>Poli Bedah</option><option>Poli Orthopedi</option><option>Poli Urologi</option>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status Kecelakaan</label>
+              <select value={formStatusKecelakaan} onChange={e => setFormStatusKecelakaan(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                <option>BUKAN KECELAKAAN</option><option>KECELAKAAN KERJA</option><option>KECELAKAAN LALU LINTAS</option><option>KECELAKAAN LAINNYA</option>
               </select>
             </div>
-            <Button type="submit" size="sm">{editingRecord ? 'Simpan' : 'Daftarkan'}</Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => { setShowAddForm(false); setEditingRecord(null); }}>Batal</Button>
-          </form>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tindak Lanjut</label>
+              <input value={formTindakLanjut} onChange={e => setFormTindakLanjut(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Datang VIA</label>
+              <select value={formDatangVia} onChange={e => setFormDatangVia(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                <option>LANGSUNG</option><option>RUJUKAN</option><option>ONLINE</option><option>IGD</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">L6</label>
+              <select value={formL6} onChange={e => setFormL6(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                <option>-</option><option>Ya</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tujuan Kunjungan</label>
+              <select value={formTujuanKunjungan} onChange={e => setFormTujuanKunjungan(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                <option>Konsultasi</option><option>Kontrol</option><option>Rawat Inap</option>
+              </select>
+            </div>
+            {editingRecord && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status Daftar</label>
+                <select value={formStatusDaftar} onChange={e => setFormStatusDaftar(e.target.value)} className="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                  <option>Terdaftar</option><option>Dilayani</option><option>Selesai</option><option>Batal</option>
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <Button variant="outline" onClick={() => { setShowModal(false); setEditingRecord(null); }}>Batal</Button>
+            <Button onClick={handleSubmit}>{editingRecord ? 'Simpan' : 'Daftarkan'}</Button>
+          </div>
         </div>
-      )}
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal isOpen={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} title="Konfirmasi Hapus" size="sm">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Apakah Anda yakin ingin menghapus pendaftaran ini?</p>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>Batal</Button>
+            <Button variant="danger" onClick={confirmDelete}>Hapus</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Main data table - bigger rows, scrollable */}
       <div className="flex-1 overflow-auto min-h-0">
@@ -433,32 +593,41 @@ function PendaftaranContent() {
         Record 1 of {data.length}
       </div>
 
-      {/* Bottom detail panel */}
-      {selectedRecord && (
-        <div className="border-t border-gray-300 bg-gray-50 p-2 max-h-36 overflow-auto">
-          <div className="text-[11px] font-semibold text-gray-500 mb-1">Detail Kunjungan Pasien: {selectedRecord.tampilanNama}</div>
-          <table className="w-full text-[11px]">
-            <thead>
-              <tr className="bg-gray-200">
-                <th className="px-2 py-1 text-left">Nomor Pendaftaran</th>
-                <th className="px-2 py-1 text-left">Tanggal</th>
-                <th className="px-2 py-1 text-left">Tujuan</th>
-                <th className="px-2 py-1 text-left">Dokter</th>
-                <th className="px-2 py-1 text-left">Cek Pemetaan</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="px-2 py-1">{selectedRecord.nomorPendaftaran}</td>
-                <td className="px-2 py-1">{formatTanggal(selectedRecord.tanggalDatang)}</td>
-                <td className="px-2 py-1">{selectedRecord.tujuan}</td>
-                <td className="px-2 py-1">{selectedRecord.dokter}</td>
-                <td className="px-2 py-1"><input type="checkbox" className="w-3.5 h-3.5" /></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Bottom detail panel - History kunjungan berdasarkan No. RM yang sama */}
+      {selectedRecord && (() => {
+        const allRecords = storageService.get<PendaftaranRecord[]>(STORAGE_KEY) || [];
+        const history = allRecords.filter(r => r.rekamMedis === selectedRecord.rekamMedis)
+          .sort((a, b) => new Date(b.tanggalDatang).getTime() - new Date(a.tanggalDatang).getTime());
+        return (
+          <div className="border-t border-gray-300 bg-gray-50 p-2 max-h-40 overflow-auto">
+            <div className="text-[11px] font-semibold text-gray-500 mb-1">
+              Detail Kunjungan Pasien: {selectedRecord.tampilanNama} (No. RM: {selectedRecord.rekamMedis}) — {history.length} kunjungan
+            </div>
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th className="px-2 py-1 text-left">Nomor Pendaftaran</th>
+                  <th className="px-2 py-1 text-left">Tanggal</th>
+                  <th className="px-2 py-1 text-left">Tujuan</th>
+                  <th className="px-2 py-1 text-left">Dokter</th>
+                  <th className="px-2 py-1 text-left">Cek Pemetaan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map(h => (
+                  <tr key={h.id} className={h.id === selectedRecord.id ? 'bg-blue-50' : ''}>
+                    <td className="px-2 py-1">{h.nomorPendaftaran}</td>
+                    <td className="px-2 py-1">{formatTanggal(h.tanggalDatang)}</td>
+                    <td className="px-2 py-1">{h.tujuan}</td>
+                    <td className="px-2 py-1">{h.dokter}</td>
+                    <td className="px-2 py-1"><input type="checkbox" className="w-3.5 h-3.5" readOnly /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {/* Status bar */}
       <div className="border-t border-gray-300 bg-gray-100 px-3 py-1 flex justify-between text-[11px] text-gray-600">
