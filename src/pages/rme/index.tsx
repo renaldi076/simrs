@@ -1,991 +1,1175 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, FileText, Plus, Trash2, Clock, User, PenLine } from 'lucide-react';
-import { rmeService } from '@/services/modules/rmeService';
-import { useAuth } from '@/hooks/useAuth';
-import { formatDate, formatDateTime } from '@/utils/formatters';
-import { Alert } from '@/components/ui/Alert';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
-import { Pagination } from '@/components/ui/Pagination';
-import { Table } from '@/components/ui/Table';
-import type { MedicalRecord, Prescription, AuditEntry } from '@/types/modules';
-import type { PaginatedResult } from '@/types/common';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Printer,
+  RefreshCw,
+  Plus,
+  Pencil,
+  Trash2,
+  FileText,
+} from 'lucide-react';
+import { storageService } from '@/services/storageService';
+import { referensiService } from '@/services/modules/referensiService';
+import { generateId, formatDate, formatDateTime } from '@/utils/formatters';
 
-type ViewMode = 'list' | 'form' | 'detail';
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-// Sample ICD-10 codes commonly used in Indonesian hospitals
-const ICD10_CODES = [
-  { code: 'A09', name: 'Infectious Gastroenteritis and Colitis' },
-  { code: 'A90', name: 'Dengue Fever' },
-  { code: 'A91', name: 'Dengue Haemorrhagic Fever' },
-  { code: 'B34.9', name: 'Viral Infection, Unspecified' },
-  { code: 'E11.9', name: 'Type 2 Diabetes Mellitus Without Complications' },
-  { code: 'G43.9', name: 'Migraine, Unspecified' },
-  { code: 'I10', name: 'Essential (Primary) Hypertension' },
-  { code: 'I25.9', name: 'Chronic Ischaemic Heart Disease' },
-  { code: 'J06.9', name: 'Acute Upper Respiratory Infection, Unspecified' },
-  { code: 'J18.9', name: 'Pneumonia, Unspecified Organism' },
-  { code: 'J45.9', name: 'Asthma, Unspecified' },
-  { code: 'K21.0', name: 'Gastro-oesophageal Reflux Disease with Oesophagitis' },
-  { code: 'K29.7', name: 'Gastritis, Unspecified' },
-  { code: 'K35.9', name: 'Acute Appendicitis, Unspecified' },
-  { code: 'M54.5', name: 'Low Back Pain' },
-  { code: 'N39.0', name: 'Urinary Tract Infection, Site Not Specified' },
-  { code: 'R50.9', name: 'Fever, Unspecified' },
-  { code: 'R51', name: 'Headache' },
-  { code: 'Z09', name: 'Follow-up Examination After Treatment' },
-  { code: 'Z00.0', name: 'General Medical Examination' },
+type DocType =
+  | 'cppt'
+  | 'asesmen_awal_medis'
+  | 'asesmen_awal_nakes'
+  | 'resume'
+  | 'hasil_lab'
+  | 'hasil_expertise'
+  | 'scan'
+  | 'laporan_operasi'
+  | 'case_manager'
+  | 'formulir_konsul'
+  | 'lembar_observasi'
+  | 'transfer_internal'
+  | 'surat_keterangan'
+  | 'kartu_obat'
+  | 'rencana_operasi'
+  | 'laporan_tindakan'
+  | 'tindakan_evaluasi'
+  | 'inf_consent'
+  | 'surat_kematian'
+  | 'form_edukasi';
+
+interface RMEDocument {
+  id: string;
+  patientRM: string;
+  patientName: string;
+  docType: DocType;
+  tanggal: string;
+  poli: string;
+  dokter: string;
+  user: string;
+  content: string;
+}
+
+interface PatientRow {
+  id: string;
+  noRM: string;
+  nama: string;
+  penjamin: string;
+  poli: string;
+  tanggalDaftar: string;
+  jenisKelamin?: string;
+  agama?: string;
+  tanggalLahir?: string;
+  nik?: string;
+  kelas?: string;
+  jenisPeserta?: string;
+}
+
+type MainTab = 'list_pasien' | 'dokumen' | 'template';
+type RightSubTab = 'dokumen_rme' | 'dokumen_lainnya';
+
+const DOC_TYPE_LABELS: Record<DocType, string> = {
+  cppt: 'CPPT',
+  asesmen_awal_medis: 'Asesmen Awal Medis',
+  asesmen_awal_nakes: 'Asesmen Awal Nakes',
+  resume: 'Resume',
+  hasil_lab: 'Hasil Laboratorium',
+  hasil_expertise: 'Hasil Expertise',
+  scan: 'Scan',
+  laporan_operasi: 'Laporan Operasi',
+  case_manager: 'Case Manager',
+  formulir_konsul: 'Formulir Konsul Dokter',
+  lembar_observasi: 'Lembar Observasi',
+  transfer_internal: 'Transfer Internal',
+  surat_keterangan: 'Surat Keterangan',
+  kartu_obat: 'Kartu Obat Pasien',
+  rencana_operasi: 'Rencana Operasi',
+  laporan_tindakan: 'Laporan Tindakan',
+  tindakan_evaluasi: 'Tindakan Evaluasi Keperawatan',
+  inf_consent: 'Inf Consent',
+  surat_kematian: 'Surat Kematian',
+  form_edukasi: 'Form Edukasi Pasien',
+};
+
+const RIGHT_PANEL_DOCS: DocType[] = [
+  'asesmen_awal_nakes',
+  'asesmen_awal_medis',
+  'hasil_lab',
+  'hasil_expertise',
+  'scan',
+  'laporan_operasi',
+  'case_manager',
+  'formulir_konsul',
+  'cppt',
+  'resume',
 ];
 
-interface FormData {
-  patientId: string;
-  visitDate: string;
-  complaint: string;
-  diagnosisCode: string;
-  treatment: string;
-  prescriptions: Prescription[];
+const DOKUMEN_TAB_DOCS: DocType[] = [
+  'asesmen_awal_medis',
+  'resume',
+  'lembar_observasi',
+  'transfer_internal',
+  'surat_keterangan',
+  'kartu_obat',
+  'rencana_operasi',
+  'laporan_operasi',
+  'laporan_tindakan',
+  'tindakan_evaluasi',
+  'scan',
+  'inf_consent',
+  'surat_kematian',
+  'form_edukasi',
+  'case_manager',
+  'cppt',
+  'asesmen_awal_nakes',
+  'formulir_konsul',
+];
+
+const POLI_OPTIONS = ['Poli Umum', 'Poli Gigi', 'Poli Anak', 'Poli Dalam', 'Poli Bedah', 'IGD'];
+const DOKTER_OPTIONS = ['dr. Ahmad Fauzi', 'dr. Siti Nurhaliza', 'dr. Budi Santoso', 'dr. Dewi Kartini', 'dr. Hasan Basri'];
+const INSTALASI_OPTIONS = ['Instalasi Gawat Darurat', 'Rawat Jalan', 'Rawat Inap'];
+
+const STORAGE_KEY_DOCS = 'rme_documents';
+const STORAGE_KEY_PATIENT = 'rme_selected_patient';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getDocuments(): RMEDocument[] {
+  return storageService.get<RMEDocument[]>(STORAGE_KEY_DOCS) || [];
 }
 
-interface FormErrors {
-  patientId?: string;
-  visitDate?: string;
-  complaint?: string;
-  diagnosisCode?: string;
-  treatment?: string;
+function saveDocuments(docs: RMEDocument[]): void {
+  storageService.set(STORAGE_KEY_DOCS, docs);
 }
 
-const EMPTY_PRESCRIPTION: Prescription = {
-  medicationName: '',
-  dosage: '',
-  frequency: '',
-  duration: '',
-  quantity: 0,
-};
+function getSelectedPatient(): PatientRow | null {
+  return storageService.get<PatientRow>(STORAGE_KEY_PATIENT);
+}
 
-const INITIAL_FORM: FormData = {
-  patientId: '',
-  visitDate: new Date().toISOString().split('T')[0],
-  complaint: '',
-  diagnosisCode: '',
-  treatment: '',
-  prescriptions: [],
-};
+function saveSelectedPatient(p: PatientRow | null): void {
+  if (p) storageService.set(STORAGE_KEY_PATIENT, p);
+  else storageService.remove(STORAGE_KEY_PATIENT);
+}
 
-const PAGE_SIZE = 20;
+function initSeedDocuments(): void {
+  const existing = getDocuments();
+  if (existing.length > 0) return;
 
-export default function RMEPage(): React.ReactElement {
-  const { state: authState } = useAuth();
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [records, setRecords] = useState<PaginatedResult<MedicalRecord>>({
-    data: [],
-    total: 0,
-    page: 1,
-    pageSize: PAGE_SIZE,
-    totalPages: 0,
-  });
-  const [currentPage, setCurrentPage] = useState(1);
-  const [formData, setFormData] = useState<FormData>(INITIAL_FORM);
-  const [formErrors, setFormErrors] = useState<FormErrors>({});
-  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<MedicalRecord | null>(null);
-  const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [showSignModal, setShowSignModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [recordToSign, setRecordToSign] = useState<string | null>(null);
-  const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
-  const [showAuditModal, setShowAuditModal] = useState(false);
-  const [auditTrailData, setAuditTrailData] = useState<AuditEntry[]>([]);
-  const [filterPatientId, setFilterPatientId] = useState('');
-
-  const loadRecords = useCallback(() => {
-    const result = rmeService.getAll(
-      filterPatientId.trim() || undefined,
-      currentPage,
-      PAGE_SIZE
-    );
-    setRecords(result);
-  }, [currentPage, filterPatientId]);
-
-  useEffect(() => {
-    loadRecords();
-  }, [loadRecords]);
-
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-  };
-
-  const handleNewRecord = () => {
-    setFormData(INITIAL_FORM);
-    setFormErrors({});
-    setEditingRecordId(null);
-    setAlertMessage(null);
-    setViewMode('form');
-  };
-
-  const handleEditRecord = (record: MedicalRecord) => {
-    if (record.status === 'final') return;
-    setFormData({
-      patientId: record.patientId,
-      visitDate: record.visitDate,
-      complaint: record.complaint,
-      diagnosisCode: record.diagnosisCode,
-      treatment: record.treatment,
-      prescriptions: record.prescriptions || [],
-    });
-    setFormErrors({});
-    setEditingRecordId(record.id);
-    setAlertMessage(null);
-    setViewMode('form');
-  };
-
-  const handleViewDetail = (record: MedicalRecord) => {
-    setSelectedRecord(record);
-    setViewMode('detail');
-  };
-
-  const handleViewAuditTrail = (record: MedicalRecord) => {
-    setAuditTrailData(record.auditTrail);
-    setShowAuditModal(true);
-  };
-
-  const handleCancel = () => {
-    setViewMode('list');
-    setSelectedRecord(null);
-    setAlertMessage(null);
-  };
-
-  const handleFormChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-    if (formErrors[name as keyof FormErrors]) {
-      setFormErrors((prev) => ({ ...prev, [name]: undefined }));
-    }
-  };
-
-  const handlePrescriptionChange = (
-    index: number,
-    field: keyof Prescription,
-    value: string | number
-  ) => {
-    setFormData((prev) => {
-      const updated = [...prev.prescriptions];
-      updated[index] = { ...updated[index], [field]: value };
-      return { ...prev, prescriptions: updated };
-    });
-  };
-
-  const addPrescription = () => {
-    setFormData((prev) => ({
-      ...prev,
-      prescriptions: [...prev.prescriptions, { ...EMPTY_PRESCRIPTION }],
-    }));
-  };
-
-  const removePrescription = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      prescriptions: prev.prescriptions.filter((_, i) => i !== index),
-    }));
-  };
-
-  const validateForm = (): boolean => {
-    const errors: FormErrors = {};
-
-    if (!formData.patientId.trim()) {
-      errors.patientId = 'ID Pasien wajib diisi';
-    }
-    if (!formData.visitDate) {
-      errors.visitDate = 'Tanggal kunjungan wajib diisi';
-    }
-    if (!formData.complaint.trim()) {
-      errors.complaint = 'Keluhan wajib diisi';
-    } else if (formData.complaint.length > 2000) {
-      errors.complaint = 'Keluhan maksimal 2000 karakter';
-    }
-    if (!formData.diagnosisCode) {
-      errors.diagnosisCode = 'Diagnosis wajib dipilih';
-    }
-    if (!formData.treatment.trim()) {
-      errors.treatment = 'Tindakan wajib diisi';
-    } else if (formData.treatment.length > 2000) {
-      errors.treatment = 'Tindakan maksimal 2000 karakter';
-    }
-
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validateForm()) return;
-
-    const selectedDiagnosis = ICD10_CODES.find((d) => d.code === formData.diagnosisCode);
-    const userName = authState.user?.fullName || 'Unknown';
-    const userId = authState.user?.id || 'unknown';
-
-    // Filter out empty prescriptions
-    const validPrescriptions = formData.prescriptions.filter(
-      (p) => p.medicationName.trim() !== ''
-    );
-
-    try {
-      if (editingRecordId) {
-        rmeService.update(editingRecordId, {
-          complaint: formData.complaint.trim(),
-          diagnosisCode: formData.diagnosisCode,
-          diagnosisName: selectedDiagnosis?.name || '',
-          treatment: formData.treatment.trim(),
-          prescriptions: validPrescriptions.length > 0 ? validPrescriptions : undefined,
-          updatedBy: userId,
-          updatedByName: userName,
-        });
-        setAlertMessage({ type: 'success', message: 'Rekam medis berhasil diperbarui.' });
-      } else {
-        rmeService.create({
-          patientId: formData.patientId.trim(),
-          visitDate: formData.visitDate,
-          complaint: formData.complaint.trim(),
-          diagnosisCode: formData.diagnosisCode,
-          diagnosisName: selectedDiagnosis?.name || '',
-          treatment: formData.treatment.trim(),
-          prescriptions: validPrescriptions.length > 0 ? validPrescriptions : undefined,
-          createdBy: userId,
-          createdByName: userName,
-        });
-        setAlertMessage({ type: 'success', message: 'Rekam medis baru berhasil disimpan.' });
-      }
-
-      loadRecords();
-      setViewMode('list');
-      setFormData(INITIAL_FORM);
-      setEditingRecordId(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Terjadi kesalahan.';
-      setAlertMessage({ type: 'error', message });
-    }
-  };
-
-  const handleSignRecord = () => {
-    if (!recordToSign) return;
-    const userName = authState.user?.fullName || 'Unknown';
-    const userId = authState.user?.id || 'unknown';
-
-    try {
-      rmeService.sign(recordToSign, userId, userName);
-      setAlertMessage({ type: 'success', message: 'Rekam medis berhasil ditandatangani dan dikunci.' });
-      loadRecords();
-      if (selectedRecord?.id === recordToSign) {
-        setSelectedRecord(rmeService.getById(recordToSign));
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Gagal menandatangani rekam medis.';
-      setAlertMessage({ type: 'error', message });
-    } finally {
-      setShowSignModal(false);
-      setRecordToSign(null);
-    }
-  };
-
-  const handleDeleteRecord = () => {
-    if (!recordToDelete) return;
-
-    try {
-      rmeService.deleteRecord(recordToDelete);
-      setAlertMessage({ type: 'success', message: 'Rekam medis berhasil dihapus.' });
-      loadRecords();
-      if (viewMode === 'detail') {
-        setViewMode('list');
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Gagal menghapus rekam medis.';
-      setAlertMessage({ type: 'error', message });
-    } finally {
-      setShowDeleteModal(false);
-      setRecordToDelete(null);
-    }
-  };
-
-  const columns = [
+  const seeds: RMEDocument[] = [
     {
-      key: 'visitDate',
-      label: 'Tanggal',
-      render: (row: Record<string, unknown>) => formatDate(row.visitDate as string),
-    },
-    { key: 'patientId', label: 'ID Pasien' },
-    {
-      key: 'diagnosisCode',
-      label: 'Diagnosis',
-      render: (row: Record<string, unknown>) => (
-        <span className="font-mono text-xs">
-          {row.diagnosisCode as string} - {row.diagnosisName as string}
-        </span>
-      ),
+      id: generateId(),
+      patientRM: '000272108',
+      patientName: 'EGI GIFARI IRHAIS',
+      docType: 'cppt',
+      tanggal: '2024-03-15T08:30:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Ahmad Fauzi',
+      user: 'admin',
+      content: JSON.stringify({
+        subjective: 'Pasien mengeluh demam tinggi 3 hari, nyeri kepala, mual.',
+        objective: 'TD 120/80, Suhu 38.5C, Nadi 92x/mnt, RR 20x/mnt. Petekie (+)',
+        assessment: 'Dengue Fever (A90)',
+        plan: 'Infus RL 20tpm, Paracetamol 3x500mg, Cek DL serial',
+        instruksi: 'Observasi tanda perdarahan, cek trombosit tiap 12 jam',
+      }),
     },
     {
-      key: 'complaint',
-      label: 'Keluhan',
-      render: (row: Record<string, unknown>) => {
-        const complaint = row.complaint as string;
-        return (
-          <span className="line-clamp-1 max-w-[200px] block" title={complaint}>
-            {complaint}
-          </span>
-        );
-      },
+      id: generateId(),
+      patientRM: '000272108',
+      patientName: 'EGI GIFARI IRHAIS',
+      docType: 'cppt',
+      tanggal: '2024-03-16T09:00:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Ahmad Fauzi',
+      user: 'admin',
+      content: JSON.stringify({
+        subjective: 'Demam sudah turun, masih lemas, nafsu makan mulai membaik.',
+        objective: 'TD 110/70, Suhu 37.0C, Nadi 80x/mnt. Trombosit naik 85.000.',
+        assessment: 'Dengue Fever dalam perbaikan',
+        plan: 'Lanjut infus, diet lunak, multivitamin',
+        instruksi: 'Boleh pulang jika trombosit >100.000 dan tidak demam 24 jam',
+      }),
     },
     {
-      key: 'status',
-      label: 'Status',
-      render: (row: Record<string, unknown>) => {
-        const status = row.status as string;
-        if (status === 'final') {
-          return (
-            <Badge variant="success" size="sm">
-              <Lock size={12} className="mr-1" />
-              Final
-            </Badge>
-          );
-        }
-        return (
-          <Badge variant="warning" size="sm">
-            <PenLine size={12} className="mr-1" />
-            Draft
-          </Badge>
-        );
-      },
+      id: generateId(),
+      patientRM: '000272108',
+      patientName: 'EGI GIFARI IRHAIS',
+      docType: 'cppt',
+      tanggal: '2024-03-17T10:00:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Siti Nurhaliza',
+      user: 'admin',
+      content: JSON.stringify({
+        subjective: 'Kondisi membaik, tidak demam, makan baik.',
+        objective: 'TD 120/80, Suhu 36.5C. Trombosit 120.000.',
+        assessment: 'Dengue Fever resolved',
+        plan: 'Rawat jalan, kontrol 3 hari, multivitamin',
+        instruksi: 'Edukasi tanda bahaya, banyak minum',
+      }),
     },
     {
-      key: 'actions',
-      label: 'Aksi',
-      render: (row: Record<string, unknown>) => {
-        const record = row as unknown as MedicalRecord;
-        return (
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleViewDetail(record);
-              }}
-            >
-              <FileText size={14} />
-            </Button>
-            {record.status === 'draft' && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleEditRecord(record);
-                  }}
-                >
-                  <PenLine size={14} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setRecordToSign(record.id);
-                    setShowSignModal(true);
-                  }}
-                >
-                  <Lock size={14} />
-                </Button>
-              </>
-            )}
-          </div>
-        );
-      },
+      id: generateId(),
+      patientRM: '000272108',
+      patientName: 'EGI GIFARI IRHAIS',
+      docType: 'asesmen_awal_medis',
+      tanggal: '2024-03-15T08:00:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Ahmad Fauzi',
+      user: 'admin',
+      content: 'Asesmen awal medis: Pasien datang dengan keluhan demam tinggi 3 hari. Riwayat kontak dengan penderita DBD di lingkungan rumah.',
+    },
+    {
+      id: generateId(),
+      patientRM: '000272108',
+      patientName: 'EGI GIFARI IRHAIS',
+      docType: 'resume',
+      tanggal: '2024-03-17T14:00:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Ahmad Fauzi',
+      user: 'admin',
+      content: 'Resume rawat: Dengue Fever. Dirawat 3 hari, kondisi membaik, trombosit normal. Pulang dengan obat oral.',
+    },
+    {
+      id: generateId(),
+      patientRM: '000271690',
+      patientName: 'EUIS KOMARIAH',
+      docType: 'cppt',
+      tanggal: '2024-04-01T09:00:00',
+      poli: 'Poli Umum',
+      dokter: 'dr. Budi Santoso',
+      user: 'admin',
+      content: JSON.stringify({
+        subjective: 'Batuk berdahak 1 minggu, pilek.',
+        objective: 'TD 120/80, Suhu 37.2C, Ronkhi (-), Wheezing (-)',
+        assessment: 'ISPA (J06.9)',
+        plan: 'Ambroxol 3x1, Cetirizine 1x1, Paracetamol k/p',
+        instruksi: 'Istirahat, banyak minum hangat',
+      }),
+    },
+    {
+      id: generateId(),
+      patientRM: '000271689',
+      patientName: 'PENDI KUSNADI',
+      docType: 'cppt',
+      tanggal: '2024-04-02T10:30:00',
+      poli: 'Poli Dalam',
+      dokter: 'dr. Dewi Kartini',
+      user: 'admin',
+      content: JSON.stringify({
+        subjective: 'Nyeri ulu hati sejak 2 hari, mual, kembung.',
+        objective: 'TD 130/85, Nyeri tekan epigastrium (+)',
+        assessment: 'Gastritis (K29.7)',
+        plan: 'Omeprazole 2x20mg, Sucralfate 3xCI, diet lunak',
+        instruksi: 'Hindari makanan pedas dan asam',
+      }),
     },
   ];
 
+  saveDocuments(seeds);
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function RMEPage(): React.ReactElement {
+  const [mainTab, setMainTab] = useState<MainTab>('list_pasien');
+  const [selectedPatient, setSelectedPatient] = useState<PatientRow | null>(getSelectedPatient);
+  const [documents, setDocuments] = useState<RMEDocument[]>([]);
+  const [selectedDocType, setSelectedDocType] = useState<DocType>('cppt');
+  const [selectedDoc, setSelectedDoc] = useState<RMEDocument | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<RMEDocument | null>(null);
+
+  // List Pasien filters
+  const [filterInstalasi, setFilterInstalasi] = useState('');
+  const [filterDokter, setFilterDokter] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [searchPatient, setSearchPatient] = useState('');
+  const [patientPage, setPatientPage] = useState(1);
+  const [rightSubTab, setRightSubTab] = useState<RightSubTab>('dokumen_rme');
+
+  // Dokumen tab
+  const [docPage, setDocPage] = useState(1);
+
+  useEffect(() => {
+    initSeedDocuments();
+    setDocuments(getDocuments());
+  }, []);
+
+  // Persist selected patient
+  useEffect(() => {
+    saveSelectedPatient(selectedPatient);
+  }, [selectedPatient]);
+
+  const refresh = () => {
+    setDocuments(getDocuments());
+  };
+
+  // ─── Patient List ────────────────────────────────────────────────────────────
+
+  const patients: PatientRow[] = useMemo(() => {
+    const raw = referensiService.getAll('adm_pasien');
+    // Add the special patient for seed
+    const hasEgi = raw.some((r) => r.kode === '000272108');
+    const list = hasEgi ? raw : [{ id: generateId(), kode: '000272108', nama: 'EGI GIFARI IRHAIS', isActive: true }, ...raw];
+
+    return list.map((r, i) => ({
+      id: r.id,
+      noRM: r.kode,
+      nama: r.nama,
+      penjamin: i % 3 === 0 ? 'BPJS' : i % 3 === 1 ? 'Umum' : 'Asuransi',
+      poli: POLI_OPTIONS[i % POLI_OPTIONS.length],
+      tanggalDaftar: new Date(2024, 2, 10 + (i % 20)).toISOString(),
+      jenisKelamin: i % 2 === 0 ? 'Laki-laki' : 'Perempuan',
+      agama: 'Islam',
+      tanggalLahir: `199${i % 10}-0${(i % 9) + 1}-1${i % 10}`,
+      nik: `320401${String(i).padStart(10, '0')}`,
+      kelas: i % 3 === 0 ? 'Kelas 1' : i % 3 === 1 ? 'Kelas 2' : 'Kelas 3',
+      jenisPeserta: i % 2 === 0 ? 'Peserta' : 'Keluarga',
+    }));
+  }, []);
+
+  const filteredPatients = useMemo(() => {
+    let list = patients;
+    if (searchPatient.trim()) {
+      const q = searchPatient.toLowerCase();
+      list = list.filter((p) => p.nama.toLowerCase().includes(q) || p.noRM.includes(q));
+    }
+    if (filterDokter) {
+      // Filter by assigned dokter (simulate)
+      list = list.filter((_, i) => DOKTER_OPTIONS[i % DOKTER_OPTIONS.length] === filterDokter);
+    }
+    return list;
+  }, [patients, searchPatient, filterDokter]);
+
+  const PAGE_SIZE_PATIENT = 15;
+  const paginatedPatients = useMemo(() => {
+    const start = (patientPage - 1) * PAGE_SIZE_PATIENT;
+    return filteredPatients.slice(start, start + PAGE_SIZE_PATIENT);
+  }, [filteredPatients, patientPage]);
+
+  // ─── Documents for selected patient & type ───────────────────────────────────
+
+  const patientDocs = useMemo(() => {
+    if (!selectedPatient) return [];
+    return documents.filter(
+      (d) => d.patientRM === selectedPatient.noRM && d.docType === selectedDocType
+    );
+  }, [documents, selectedPatient, selectedDocType]);
+
+  const PAGE_SIZE_DOC = 10;
+  const paginatedDocs = useMemo(() => {
+    const start = (docPage - 1) * PAGE_SIZE_DOC;
+    return patientDocs.slice(start, start + PAGE_SIZE_DOC);
+  }, [patientDocs, docPage]);
+
+  // ─── CRUD ────────────────────────────────────────────────────────────────────
+
+  const handleAdd = () => {
+    if (!selectedPatient) return;
+    setEditingDoc(null);
+    setShowModal(true);
+  };
+
+  const handleEdit = () => {
+    if (!selectedDoc) return;
+    setEditingDoc(selectedDoc);
+    setShowModal(true);
+  };
+
+  const handleDelete = () => {
+    if (!selectedDoc) return;
+    if (!confirm('Hapus dokumen ini?')) return;
+    const docs = getDocuments().filter((d) => d.id !== selectedDoc.id);
+    saveDocuments(docs);
+    setDocuments(docs);
+    setSelectedDoc(null);
+  };
+
+  const handleSaveDoc = (doc: RMEDocument) => {
+    let docs = getDocuments();
+    const idx = docs.findIndex((d) => d.id === doc.id);
+    if (idx >= 0) {
+      docs[idx] = doc;
+    } else {
+      docs.push(doc);
+    }
+    saveDocuments(docs);
+    setDocuments(docs);
+    setShowModal(false);
+    setSelectedDoc(doc);
+  };
+
+  const handleSelectPatient = (p: PatientRow) => {
+    setSelectedPatient(p);
+    setSelectedDoc(null);
+    setDocPage(1);
+  };
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">Rekam Medis Elektronik</h1>
-        {viewMode === 'list' && (
-          <Button onClick={handleNewRecord}>
-            <Plus size={16} className="mr-1" />
-            Tambah Rekam Medis
-          </Button>
+    <div className="flex flex-col h-full bg-gray-100 text-xs">
+      {/* Tab bar */}
+      <div className="flex items-center bg-white border-b px-2 py-1 gap-1">
+        <TabBtn active={mainTab === 'list_pasien'} onClick={() => setMainTab('list_pasien')}>
+          List Pasien
+        </TabBtn>
+        <TabBtn active={mainTab === 'dokumen'} onClick={() => setMainTab('dokumen')}>
+          Dokumen
+        </TabBtn>
+        <TabBtn active={mainTab === 'template'} onClick={() => setMainTab('template')}>
+          Template
+        </TabBtn>
+        <div className="ml-auto flex gap-1">
+          <button className="p-1 hover:bg-gray-100 rounded" title="Print">
+            <Printer size={14} />
+          </button>
+          <button className="p-1 hover:bg-gray-100 rounded" title="Refresh" onClick={refresh}>
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-hidden">
+        {mainTab === 'list_pasien' && (
+          <ListPasienTab
+            patients={paginatedPatients}
+            totalPatients={filteredPatients.length}
+            page={patientPage}
+            setPage={setPatientPage}
+            pageSize={PAGE_SIZE_PATIENT}
+            selectedPatient={selectedPatient}
+            onSelectPatient={handleSelectPatient}
+            searchPatient={searchPatient}
+            setSearchPatient={setSearchPatient}
+            filterInstalasi={filterInstalasi}
+            setFilterInstalasi={setFilterInstalasi}
+            filterDokter={filterDokter}
+            setFilterDokter={setFilterDokter}
+            filterFrom={filterFrom}
+            setFilterFrom={setFilterFrom}
+            filterTo={filterTo}
+            setFilterTo={setFilterTo}
+            documents={documents}
+            selectedDocType={selectedDocType}
+            setSelectedDocType={setSelectedDocType}
+            selectedDoc={selectedDoc}
+            setSelectedDoc={setSelectedDoc}
+            rightSubTab={rightSubTab}
+            setRightSubTab={setRightSubTab}
+            refresh={refresh}
+          />
+        )}
+        {mainTab === 'dokumen' && (
+          <DokumenTab
+            selectedPatient={selectedPatient}
+            documents={paginatedDocs}
+            totalDocs={patientDocs.length}
+            docPage={docPage}
+            setDocPage={setDocPage}
+            pageSize={PAGE_SIZE_DOC}
+            selectedDocType={selectedDocType}
+            setSelectedDocType={setSelectedDocType}
+            selectedDoc={selectedDoc}
+            setSelectedDoc={setSelectedDoc}
+            onAdd={handleAdd}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            refresh={refresh}
+          />
+        )}
+        {mainTab === 'template' && (
+          <div className="flex items-center justify-center h-full text-gray-500">
+            Template belum tersedia
+          </div>
         )}
       </div>
 
-      {alertMessage && (
-        <Alert
-          type={alertMessage.type}
-          message={alertMessage.message}
-          onClose={() => setAlertMessage(null)}
+      {/* Modal */}
+      {showModal && selectedPatient && (
+        <DocFormModal
+          docType={selectedDocType}
+          patient={selectedPatient}
+          editingDoc={editingDoc}
+          onSave={handleSaveDoc}
+          onClose={() => setShowModal(false)}
         />
       )}
-
-      <AnimatePresence mode="wait">
-        {viewMode === 'list' && (
-          <motion.div
-            key="list"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-4"
-          >
-            <Input
-              name="filterPatientId"
-              type="text"
-              placeholder="Filter berdasarkan ID Pasien..."
-              value={filterPatientId}
-              onChange={(e) => {
-                setFilterPatientId(e.target.value);
-                setCurrentPage(1);
-              }}
-            />
-
-            <Table
-              columns={columns}
-              data={records.data as unknown as Record<string, unknown>[]}
-              emptyMessage="Tidak ada data rekam medis"
-            />
-
-            {records.totalPages > 1 && (
-              <Pagination
-                currentPage={records.page}
-                totalPages={records.totalPages}
-                onPageChange={handlePageChange}
-                pageSize={PAGE_SIZE}
-                totalItems={records.total}
-              />
-            )}
-          </motion.div>
-        )}
-
-        {viewMode === 'form' && (
-          <motion.div
-            key="form"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-          >
-            <form onSubmit={handleSubmit} className="max-w-3xl space-y-4">
-              <div className="rounded-lg border border-gray-200 bg-white p-6 space-y-4">
-                <h2 className="text-lg font-semibold text-gray-700">
-                  {editingRecordId ? 'Edit Rekam Medis' : 'Formulir Rekam Medis Baru'}
-                </h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="ID Pasien"
-                    name="patientId"
-                    type="text"
-                    value={formData.patientId}
-                    onChange={handleFormChange}
-                    error={formErrors.patientId}
-                    required
-                    disabled={!!editingRecordId}
-                    placeholder="Contoh: patient-1"
-                  />
-
-                  <Input
-                    label="Tanggal Kunjungan"
-                    name="visitDate"
-                    type="date"
-                    value={formData.visitDate}
-                    onChange={handleFormChange}
-                    error={formErrors.visitDate}
-                    required
-                  />
-                </div>
-
-                {/* Keluhan */}
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="complaint" className="text-sm font-medium text-gray-700">
-                    Keluhan<span className="text-red-500 ml-0.5">*</span>
-                  </label>
-                  <textarea
-                    id="complaint"
-                    name="complaint"
-                    value={formData.complaint}
-                    onChange={handleFormChange}
-                    maxLength={2000}
-                    rows={4}
-                    placeholder="Deskripsikan keluhan pasien..."
-                    className={`w-full rounded-lg border px-3 py-2 text-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-                      formErrors.complaint
-                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200'
-                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                    }`}
-                  />
-                  <div className="flex justify-between">
-                    {formErrors.complaint && (
-                      <p className="text-xs text-red-600" role="alert">{formErrors.complaint}</p>
-                    )}
-                    <p className="text-xs text-gray-400 ml-auto">{formData.complaint.length}/2000</p>
-                  </div>
-                </div>
-
-                {/* Diagnosis ICD-10 */}
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="diagnosisCode" className="text-sm font-medium text-gray-700">
-                    Diagnosis ICD-10<span className="text-red-500 ml-0.5">*</span>
-                  </label>
-                  <select
-                    id="diagnosisCode"
-                    name="diagnosisCode"
-                    value={formData.diagnosisCode}
-                    onChange={handleFormChange}
-                    className={`w-full rounded-lg border px-3 py-2 text-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-                      formErrors.diagnosisCode
-                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200'
-                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                    }`}
-                  >
-                    <option value="">Pilih diagnosis...</option>
-                    {ICD10_CODES.map((d) => (
-                      <option key={d.code} value={d.code}>
-                        {d.code} - {d.name}
-                      </option>
-                    ))}
-                  </select>
-                  {formErrors.diagnosisCode && (
-                    <p className="text-xs text-red-600" role="alert">{formErrors.diagnosisCode}</p>
-                  )}
-                </div>
-
-                {/* Tindakan */}
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="treatment" className="text-sm font-medium text-gray-700">
-                    Tindakan<span className="text-red-500 ml-0.5">*</span>
-                  </label>
-                  <textarea
-                    id="treatment"
-                    name="treatment"
-                    value={formData.treatment}
-                    onChange={handleFormChange}
-                    maxLength={2000}
-                    rows={4}
-                    placeholder="Deskripsikan tindakan yang dilakukan..."
-                    className={`w-full rounded-lg border px-3 py-2 text-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-                      formErrors.treatment
-                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200'
-                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                    }`}
-                  />
-                  <div className="flex justify-between">
-                    {formErrors.treatment && (
-                      <p className="text-xs text-red-600" role="alert">{formErrors.treatment}</p>
-                    )}
-                    <p className="text-xs text-gray-400 ml-auto">{formData.treatment.length}/2000</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Prescriptions Section */}
-              <div className="rounded-lg border border-gray-200 bg-white p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-md font-semibold text-gray-700">Resep Obat (Opsional)</h3>
-                  <Button variant="outline" size="sm" onClick={addPrescription}>
-                    <Plus size={14} className="mr-1" />
-                    Tambah Obat
-                  </Button>
-                </div>
-
-                {formData.prescriptions.length === 0 && (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    Belum ada resep obat. Klik tombol di atas untuk menambah.
-                  </p>
-                )}
-
-                {formData.prescriptions.map((rx, idx) => (
-                  <div key={idx} className="border border-gray-100 rounded-lg p-4 space-y-3 bg-gray-50">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-600">Obat #{idx + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() => removePrescription(idx)}
-                        className="text-red-500 hover:text-red-700 p-1"
-                        aria-label="Hapus obat"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">Nama Obat</label>
-                        <input
-                          type="text"
-                          value={rx.medicationName}
-                          onChange={(e) => handlePrescriptionChange(idx, 'medicationName', e.target.value)}
-                          placeholder="Nama obat"
-                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">Dosis</label>
-                        <input
-                          type="text"
-                          value={rx.dosage}
-                          onChange={(e) => handlePrescriptionChange(idx, 'dosage', e.target.value)}
-                          placeholder="Contoh: 500mg"
-                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">Frekuensi</label>
-                        <input
-                          type="text"
-                          value={rx.frequency}
-                          onChange={(e) => handlePrescriptionChange(idx, 'frequency', e.target.value)}
-                          placeholder="Contoh: 3x sehari"
-                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">Durasi</label>
-                        <input
-                          type="text"
-                          value={rx.duration}
-                          onChange={(e) => handlePrescriptionChange(idx, 'duration', e.target.value)}
-                          placeholder="Contoh: 5 hari"
-                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs font-medium text-gray-600">Jumlah</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={rx.quantity}
-                          onChange={(e) => handlePrescriptionChange(idx, 'quantity', parseInt(e.target.value) || 0)}
-                          placeholder="Jumlah"
-                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-3">
-                <Button type="submit">
-                  {editingRecordId ? 'Simpan Perubahan' : 'Simpan Rekam Medis'}
-                </Button>
-                <Button variant="outline" onClick={handleCancel}>
-                  Batal
-                </Button>
-              </div>
-            </form>
-          </motion.div>
-        )}
-
-        {viewMode === 'detail' && selectedRecord && (
-          <motion.div
-            key="detail"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="max-w-3xl space-y-4"
-          >
-            {/* Header */}
-            <div className="rounded-lg border border-gray-200 bg-white p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-800">
-                    Detail Rekam Medis
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    ID: {selectedRecord.id}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {selectedRecord.status === 'final' ? (
-                    <Badge variant="success">
-                      <Lock size={12} className="mr-1" />
-                      Final - Ditandatangani
-                    </Badge>
-                  ) : (
-                    <Badge variant="warning">
-                      <PenLine size={12} className="mr-1" />
-                      Draft
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">ID Pasien:</span>
-                  <p className="font-medium text-gray-800">{selectedRecord.patientId}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500">Tanggal Kunjungan:</span>
-                  <p className="font-medium text-gray-800">{formatDate(selectedRecord.visitDate)}</p>
-                </div>
-                {selectedRecord.signedBy && (
-                  <>
-                    <div>
-                      <span className="text-gray-500">Ditandatangani oleh:</span>
-                      <p className="font-medium text-gray-800">{selectedRecord.signedBy}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Waktu tanda tangan:</span>
-                      <p className="font-medium text-gray-800">
-                        {selectedRecord.signedAt ? formatDateTime(selectedRecord.signedAt) : '-'}
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Clinical Data */}
-            <div className="rounded-lg border border-gray-200 bg-white p-6 space-y-4">
-              <h3 className="font-semibold text-gray-700">Data Klinis</h3>
-
-              <div>
-                <span className="text-sm text-gray-500">Keluhan:</span>
-                <p className="mt-1 text-sm text-gray-800 whitespace-pre-wrap">{selectedRecord.complaint}</p>
-              </div>
-
-              <div>
-                <span className="text-sm text-gray-500">Diagnosis (ICD-10):</span>
-                <p className="mt-1 text-sm text-gray-800 font-mono">
-                  {selectedRecord.diagnosisCode} - {selectedRecord.diagnosisName}
-                </p>
-              </div>
-
-              <div>
-                <span className="text-sm text-gray-500">Tindakan:</span>
-                <p className="mt-1 text-sm text-gray-800 whitespace-pre-wrap">{selectedRecord.treatment}</p>
-              </div>
-            </div>
-
-            {/* Prescriptions */}
-            {selectedRecord.prescriptions && selectedRecord.prescriptions.length > 0 && (
-              <div className="rounded-lg border border-gray-200 bg-white p-6 space-y-3">
-                <h3 className="font-semibold text-gray-700">Resep Obat</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="text-left py-2 px-2 text-gray-500 font-medium">Nama Obat</th>
-                        <th className="text-left py-2 px-2 text-gray-500 font-medium">Dosis</th>
-                        <th className="text-left py-2 px-2 text-gray-500 font-medium">Frekuensi</th>
-                        <th className="text-left py-2 px-2 text-gray-500 font-medium">Durasi</th>
-                        <th className="text-right py-2 px-2 text-gray-500 font-medium">Jumlah</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedRecord.prescriptions.map((rx, idx) => (
-                        <tr key={idx} className="border-b border-gray-100">
-                          <td className="py-2 px-2 text-gray-800">{rx.medicationName}</td>
-                          <td className="py-2 px-2 text-gray-800">{rx.dosage}</td>
-                          <td className="py-2 px-2 text-gray-800">{rx.frequency}</td>
-                          <td className="py-2 px-2 text-gray-800">{rx.duration}</td>
-                          <td className="py-2 px-2 text-gray-800 text-right">{rx.quantity}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-3 flex-wrap">
-              <Button variant="outline" onClick={handleCancel}>
-                Kembali
-              </Button>
-              {selectedRecord.status === 'draft' && (
-                <>
-                  <Button
-                    variant="primary"
-                    onClick={() => handleEditRecord(selectedRecord)}
-                  >
-                    <PenLine size={14} className="mr-1" />
-                    Edit
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setRecordToSign(selectedRecord.id);
-                      setShowSignModal(true);
-                    }}
-                  >
-                    <Lock size={14} className="mr-1" />
-                    Tanda Tangan Digital
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => {
-                      setRecordToDelete(selectedRecord.id);
-                      setShowDeleteModal(true);
-                    }}
-                  >
-                    <Trash2 size={14} className="mr-1" />
-                    Hapus
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="ghost"
-                onClick={() => handleViewAuditTrail(selectedRecord)}
-              >
-                <Clock size={14} className="mr-1" />
-                Audit Trail
-              </Button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Sign Confirmation Modal */}
-      <Modal
-        isOpen={showSignModal}
-        onClose={() => {
-          setShowSignModal(false);
-          setRecordToSign(null);
-        }}
-        title="Konfirmasi Tanda Tangan Digital"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Apakah Anda yakin ingin menandatangani rekam medis ini? Setelah ditandatangani,
-            rekam medis <strong>tidak dapat diedit</strong> lagi.
-          </p>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setShowSignModal(false);
-                setRecordToSign(null);
-              }}
-            >
-              Batal
-            </Button>
-            <Button size="sm" onClick={handleSignRecord}>
-              <Lock size={14} className="mr-1" />
-              Tanda Tangani
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Delete Confirmation Modal */}
-      <Modal
-        isOpen={showDeleteModal}
-        onClose={() => {
-          setShowDeleteModal(false);
-          setRecordToDelete(null);
-        }}
-        title="Konfirmasi Hapus"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Apakah Anda yakin ingin menghapus rekam medis ini? Tindakan ini tidak dapat dibatalkan.
-          </p>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setShowDeleteModal(false);
-                setRecordToDelete(null);
-              }}
-            >
-              Batal
-            </Button>
-            <Button variant="danger" size="sm" onClick={handleDeleteRecord}>
-              <Trash2 size={14} className="mr-1" />
-              Hapus
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Audit Trail Modal */}
-      <Modal
-        isOpen={showAuditModal}
-        onClose={() => setShowAuditModal(false)}
-        title="Audit Trail"
-        size="lg"
-      >
-        <div className="space-y-3 max-h-[400px] overflow-y-auto">
-          {auditTrailData.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-4">Tidak ada data audit trail.</p>
-          )}
-          {auditTrailData.map((entry, idx) => (
-            <div
-              key={idx}
-              className="flex items-start gap-3 border-b border-gray-100 pb-3 last:border-0"
-            >
-              <div className="shrink-0 mt-0.5">
-                {entry.action === 'create' && (
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-                    <Plus size={14} className="text-green-600" />
-                  </div>
-                )}
-                {entry.action === 'update' && (
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                    <PenLine size={14} className="text-blue-600" />
-                  </div>
-                )}
-                {entry.action === 'sign' && (
-                  <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
-                    <Lock size={14} className="text-purple-600" />
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-800">
-                    {entry.action === 'create' && 'Dibuat'}
-                    {entry.action === 'update' && 'Diperbarui'}
-                    {entry.action === 'sign' && 'Ditandatangani'}
-                  </span>
-                  <Badge variant="neutral" size="sm">
-                    {entry.action}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
-                  <User size={12} />
-                  <span>{entry.userName}</span>
-                  <span>•</span>
-                  <Clock size={12} />
-                  <span>{formatDateTime(entry.timestamp)}</span>
-                </div>
-                {entry.changes && Object.keys(entry.changes).length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {Object.entries(entry.changes).map(([field, change]) => (
-                      <div key={field} className="text-xs bg-gray-50 rounded p-2">
-                        <span className="font-medium text-gray-600">{field}:</span>
-                        <div className="mt-0.5">
-                          <span className="text-red-600 line-through">{change.from.substring(0, 100)}</span>
-                          <span className="mx-1">→</span>
-                          <span className="text-green-600">{change.to.substring(0, 100)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Modal>
     </div>
   );
 }
 
-export { RMEPage as RME };
+// ─── Tab Button ──────────────────────────────────────────────────────────────
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 text-xs font-medium rounded-t border-b-2 transition-colors ${
+        active ? 'border-blue-600 text-blue-700 bg-blue-50' : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── List Pasien Tab ─────────────────────────────────────────────────────────
+
+interface ListPasienTabProps {
+  patients: PatientRow[];
+  totalPatients: number;
+  page: number;
+  setPage: (p: number) => void;
+  pageSize: number;
+  selectedPatient: PatientRow | null;
+  onSelectPatient: (p: PatientRow) => void;
+  searchPatient: string;
+  setSearchPatient: (s: string) => void;
+  filterInstalasi: string;
+  setFilterInstalasi: (s: string) => void;
+  filterDokter: string;
+  setFilterDokter: (s: string) => void;
+  filterFrom: string;
+  setFilterFrom: (s: string) => void;
+  filterTo: string;
+  setFilterTo: (s: string) => void;
+  documents: RMEDocument[];
+  selectedDocType: DocType;
+  setSelectedDocType: (t: DocType) => void;
+  selectedDoc: RMEDocument | null;
+  setSelectedDoc: (d: RMEDocument | null) => void;
+  rightSubTab: RightSubTab;
+  setRightSubTab: (t: RightSubTab) => void;
+  refresh: () => void;
+}
+
+function ListPasienTab(props: ListPasienTabProps) {
+  const {
+    patients, totalPatients, page, setPage, pageSize,
+    selectedPatient, onSelectPatient,
+    searchPatient, setSearchPatient,
+    filterInstalasi, setFilterInstalasi,
+    filterDokter, setFilterDokter,
+    filterFrom, setFilterFrom,
+    filterTo, setFilterTo,
+    documents, selectedDocType, setSelectedDocType,
+    selectedDoc, setSelectedDoc,
+    rightSubTab, setRightSubTab,
+    refresh,
+  } = props;
+
+  const rightDocs = useMemo(() => {
+    if (!selectedPatient) return [];
+    return documents.filter((d) => d.patientRM === selectedPatient.noRM && d.docType === selectedDocType);
+  }, [documents, selectedPatient, selectedDocType]);
+
+  return (
+    <div className="flex h-full">
+      {/* Left Panel 70% */}
+      <div className="w-[70%] flex flex-col border-r bg-white">
+        {/* Filters */}
+        <div className="p-2 border-b bg-gray-50 flex flex-wrap gap-2 items-end">
+          <div className="flex flex-col">
+            <label className="text-[10px] text-gray-500 mb-0.5">Type</label>
+            <select
+              className="border rounded px-2 py-1 text-xs w-44"
+              value={filterInstalasi}
+              onChange={(e) => setFilterInstalasi(e.target.value)}
+            >
+              <option value="">Semua Instalasi</option>
+              {INSTALASI_OPTIONS.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[10px] text-gray-500 mb-0.5">Dokter</label>
+            <select
+              className="border rounded px-2 py-1 text-xs w-40"
+              value={filterDokter}
+              onChange={(e) => setFilterDokter(e.target.value)}
+            >
+              <option value="">Semua Dokter</option>
+              {DOKTER_OPTIONS.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[10px] text-gray-500 mb-0.5">Dari Tanggal</label>
+            <input
+              type="date"
+              className="border rounded px-2 py-1 text-xs"
+              value={filterFrom}
+              onChange={(e) => setFilterFrom(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[10px] text-gray-500 mb-0.5">Sampai Tanggal</label>
+            <input
+              type="date"
+              className="border rounded px-2 py-1 text-xs"
+              value={filterTo}
+              onChange={(e) => setFilterTo(e.target.value)}
+            />
+          </div>
+          <button
+            className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"
+            onClick={() => { setFilterInstalasi(''); setFilterDokter(''); setFilterFrom(''); setFilterTo(''); }}
+          >
+            Filter All
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="p-2 border-b">
+          <input
+            type="text"
+            placeholder="Cari nama pasien atau no RM..."
+            className="border rounded px-2 py-1 text-xs w-full"
+            value={searchPatient}
+            onChange={(e) => { setSearchPatient(e.target.value); setPage(1); }}
+          />
+        </div>
+
+        {/* Patient Table */}
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-100 sticky top-0">
+              <tr>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-600">PENJAMIN</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-600">POLI</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-600">TANGGALDAFTAR</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-600">NO RM</th>
+                <th className="px-2 py-1.5 text-left font-medium text-gray-600">NAMAPASIEN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {patients.map((p) => (
+                <tr
+                  key={p.id}
+                  className={`cursor-pointer border-b hover:bg-blue-50 ${
+                    selectedPatient?.id === p.id ? 'bg-blue-100' : ''
+                  }`}
+                  onClick={() => onSelectPatient(p)}
+                >
+                  <td className="px-2 py-1">{p.penjamin}</td>
+                  <td className="px-2 py-1">{p.poli}</td>
+                  <td className="px-2 py-1">{formatDate(p.tanggalDaftar)}</td>
+                  <td className="px-2 py-1 font-mono">{p.noRM}</td>
+                  <td className="px-2 py-1 font-medium">{p.nama}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="px-2 py-1 border-t bg-gray-50 flex items-center justify-between">
+          <span className="text-[10px] text-gray-500">
+            Record {Math.min((page - 1) * pageSize + 1, totalPatients)} of {totalPatients}
+          </span>
+          <div className="flex gap-1">
+            <button
+              className="px-2 py-0.5 border rounded text-[10px] disabled:opacity-50"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+            >
+              Prev
+            </button>
+            <button
+              className="px-2 py-0.5 border rounded text-[10px] disabled:opacity-50"
+              disabled={page * pageSize >= totalPatients}
+              onClick={() => setPage(page + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Right Panel 30% */}
+      <div className="w-[30%] flex flex-col bg-white">
+        {/* Header */}
+        <div className="flex items-center px-2 py-1.5 border-b bg-gray-50 gap-2">
+          <label className="flex items-center gap-1 text-[10px]">
+            <input type="checkbox" className="rounded" />
+            Lihat Rincian Kuitansi?
+          </label>
+          <button className="ml-auto p-1 hover:bg-gray-200 rounded" onClick={refresh}>
+            <RefreshCw size={12} />
+          </button>
+        </div>
+
+        {/* Sub tabs */}
+        <div className="flex border-b">
+          <button
+            className={`flex-1 py-1.5 text-[10px] font-medium ${rightSubTab === 'dokumen_rme' ? 'border-b-2 border-blue-600 text-blue-700' : 'text-gray-500'}`}
+            onClick={() => setRightSubTab('dokumen_rme')}
+          >
+            Dokumen RME
+          </button>
+          <button
+            className={`flex-1 py-1.5 text-[10px] font-medium ${rightSubTab === 'dokumen_lainnya' ? 'border-b-2 border-blue-600 text-blue-700' : 'text-gray-500'}`}
+            onClick={() => setRightSubTab('dokumen_lainnya')}
+          >
+            Dokumen Lainnya
+          </button>
+        </div>
+
+        {/* Doc type grid */}
+        <div className="p-2 grid grid-cols-2 gap-1">
+          {RIGHT_PANEL_DOCS.map((dt) => (
+            <button
+              key={dt}
+              onClick={() => { setSelectedDocType(dt); setSelectedDoc(null); }}
+              className={`px-1.5 py-1.5 text-[10px] rounded border text-center truncate ${
+                selectedDocType === dt ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 hover:bg-gray-100 border-gray-200'
+              }`}
+              title={DOC_TYPE_LABELS[dt]}
+            >
+              {DOC_TYPE_LABELS[dt]}
+            </button>
+          ))}
+        </div>
+
+        {/* Preview area */}
+        <div className="flex-1 border-t m-2 mt-0 rounded border overflow-auto bg-gray-50 p-2">
+          {selectedDoc ? (
+            <DocPreview doc={selectedDoc} />
+          ) : (
+            <div className="flex items-center justify-center h-full text-[10px] text-gray-400">
+              The document does not contain any pages.
+            </div>
+          )}
+        </div>
+
+        {/* Doc list for right panel */}
+        {rightDocs.length > 0 && (
+          <div className="border-t max-h-32 overflow-auto">
+            {rightDocs.map((d) => (
+              <div
+                key={d.id}
+                onClick={() => setSelectedDoc(d)}
+                className={`px-2 py-1 text-[10px] border-b cursor-pointer hover:bg-blue-50 ${selectedDoc?.id === d.id ? 'bg-blue-100' : ''}`}
+              >
+                <span className="font-medium">{formatDateTime(d.tanggal)}</span> — {d.dokter}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Dokumen Tab ─────────────────────────────────────────────────────────────
+
+interface DokumenTabProps {
+  selectedPatient: PatientRow | null;
+  documents: RMEDocument[];
+  totalDocs: number;
+  docPage: number;
+  setDocPage: (p: number) => void;
+  pageSize: number;
+  selectedDocType: DocType;
+  setSelectedDocType: (t: DocType) => void;
+  selectedDoc: RMEDocument | null;
+  setSelectedDoc: (d: RMEDocument | null) => void;
+  onAdd: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  refresh: () => void;
+}
+
+function DokumenTab(props: DokumenTabProps) {
+  const {
+    selectedPatient, documents, totalDocs, docPage, setDocPage, pageSize,
+    selectedDocType, setSelectedDocType, selectedDoc, setSelectedDoc,
+    onAdd, onEdit, onDelete, refresh,
+  } = props;
+
+  if (!selectedPatient) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+        Pilih pasien terlebih dahulu dari tab &quot;List Pasien&quot;
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Patient info header */}
+      <div className="bg-white border-b p-2">
+        <div className="grid grid-cols-3 gap-x-6 gap-y-1 text-xs">
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Nomor RM</span>
+            <span className="font-medium">{selectedPatient.noRM}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-24">Jenis Kelamin</span>
+            <span>{selectedPatient.jenisKelamin || '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Kelas</span>
+            <span>{selectedPatient.kelas || '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Nomor NIK</span>
+            <span>{selectedPatient.nik || '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-24">Agama</span>
+            <span>{selectedPatient.agama || '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Jenis Peserta</span>
+            <span>{selectedPatient.jenisPeserta || '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Nama Pasien</span>
+            <span className="font-semibold">{selectedPatient.nama}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-24">Tanggal Lahir</span>
+            <span>{selectedPatient.tanggalLahir ? formatDate(selectedPatient.tanggalLahir) : '-'}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-500 w-20">Usia</span>
+            <span>{selectedPatient.tanggalLahir ? calcAge(selectedPatient.tanggalLahir) : '-'}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Doc type grid */}
+      <div className="bg-white border-b p-2">
+        <div className="grid grid-cols-6 gap-1">
+          {DOKUMEN_TAB_DOCS.map((dt) => (
+            <button
+              key={dt}
+              onClick={() => { setSelectedDocType(dt); setSelectedDoc(null); setDocPage(1); }}
+              className={`px-1 py-1.5 text-[10px] rounded border text-center truncate ${
+                selectedDocType === dt ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 hover:bg-gray-100 border-gray-200'
+              }`}
+              title={DOC_TYPE_LABELS[dt]}
+            >
+              {DOC_TYPE_LABELS[dt]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-white border-b px-2 py-1 flex gap-1 flex-wrap">
+        <ToolbarBtn icon={<Plus size={12} />} label="Add" onClick={onAdd} />
+        <ToolbarBtn icon={<Pencil size={12} />} label="Edit" onClick={onEdit} disabled={!selectedDoc} />
+        <ToolbarBtn icon={<Trash2 size={12} />} label="Delete" onClick={onDelete} disabled={!selectedDoc} />
+        <ToolbarBtn icon={<RefreshCw size={12} />} label="Refresh" onClick={refresh} />
+        <ToolbarBtn icon={<FileText size={12} />} label="Cetak SKD/SPRI" onClick={() => {}} />
+        <ToolbarBtn icon={<FileText size={12} />} label="Konsul Dokter" onClick={() => {}} />
+        <ToolbarBtn icon={<FileText size={12} />} label="Rujuk Internal" onClick={() => {}} />
+      </div>
+
+      {/* Bottom: Table + Preview */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: table */}
+        <div className="w-[55%] flex flex-col border-r">
+          <div className="flex-1 overflow-auto">
+            <table className="w-full text-[10px]">
+              <thead className="bg-gray-100 sticky top-0">
+                <tr>
+                  <th className="px-1.5 py-1 text-left font-medium text-gray-600">PENJAMIN</th>
+                  <th className="px-1.5 py-1 text-left font-medium text-gray-600">TANGGAL</th>
+                  <th className="px-1.5 py-1 text-left font-medium text-gray-600">POLI/RUANG</th>
+                  <th className="px-1.5 py-1 text-left font-medium text-gray-600">DOKTER</th>
+                  <th className="px-1.5 py-1 text-left font-medium text-gray-600">USER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center py-4 text-gray-400">
+                      Tidak ada dokumen {DOC_TYPE_LABELS[selectedDocType]}
+                    </td>
+                  </tr>
+                ) : (
+                  documents.map((d) => (
+                    <tr
+                      key={d.id}
+                      className={`cursor-pointer border-b hover:bg-blue-50 ${selectedDoc?.id === d.id ? 'bg-blue-100' : ''}`}
+                      onClick={() => setSelectedDoc(d)}
+                    >
+                      <td className="px-1.5 py-1">{selectedPatient.penjamin}</td>
+                      <td className="px-1.5 py-1">{formatDateTime(d.tanggal)}</td>
+                      <td className="px-1.5 py-1">{d.poli}</td>
+                      <td className="px-1.5 py-1">{d.dokter}</td>
+                      <td className="px-1.5 py-1">{d.user}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-2 py-1 border-t bg-gray-50 text-[10px] text-gray-500 flex justify-between">
+            <span>Record {totalDocs > 0 ? (docPage - 1) * pageSize + 1 : 0} of {totalDocs}</span>
+            <div className="flex gap-1">
+              <button className="px-2 py-0.5 border rounded disabled:opacity-50" disabled={docPage <= 1} onClick={() => setDocPage(docPage - 1)}>Prev</button>
+              <button className="px-2 py-0.5 border rounded disabled:opacity-50" disabled={docPage * pageSize >= totalDocs} onClick={() => setDocPage(docPage + 1)}>Next</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Preview */}
+        <div className="w-[45%] overflow-auto bg-gray-50 p-2">
+          {selectedDoc ? (
+            <DocPreview doc={selectedDoc} />
+          ) : (
+            <div className="flex items-center justify-center h-full text-[10px] text-gray-400">
+              The document does not contain any pages.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Toolbar Button ──────────────────────────────────────────────────────────
+
+function ToolbarBtn({ icon, label, onClick, disabled }: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex items-center gap-1 px-2 py-1 text-[10px] border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed bg-white"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// ─── Doc Preview ─────────────────────────────────────────────────────────────
+
+function DocPreview({ doc }: { doc: RMEDocument }) {
+  if (doc.docType === 'cppt') {
+    try {
+      const data = JSON.parse(doc.content);
+      return (
+        <div className="text-[11px] space-y-2">
+          <div className="font-semibold text-blue-700 mb-1">CPPT — {formatDateTime(doc.tanggal)}</div>
+          <div className="font-medium text-gray-600">Dokter: {doc.dokter}</div>
+          <div className="border-t pt-1">
+            <div className="font-semibold text-gray-700">S (Subjective):</div>
+            <div className="text-gray-600 ml-2">{data.subjective}</div>
+          </div>
+          <div className="border-t pt-1">
+            <div className="font-semibold text-gray-700">O (Objective):</div>
+            <div className="text-gray-600 ml-2">{data.objective}</div>
+          </div>
+          <div className="border-t pt-1">
+            <div className="font-semibold text-gray-700">A (Assessment):</div>
+            <div className="text-gray-600 ml-2">{data.assessment}</div>
+          </div>
+          <div className="border-t pt-1">
+            <div className="font-semibold text-gray-700">P (Plan):</div>
+            <div className="text-gray-600 ml-2">{data.plan}</div>
+          </div>
+          {data.instruksi && (
+            <div className="border-t pt-1">
+              <div className="font-semibold text-gray-700">Instruksi:</div>
+              <div className="text-gray-600 ml-2">{data.instruksi}</div>
+            </div>
+          )}
+        </div>
+      );
+    } catch {
+      // fallback
+    }
+  }
+
+  return (
+    <div className="text-[11px] space-y-1">
+      <div className="font-semibold text-blue-700">{DOC_TYPE_LABELS[doc.docType]} — {formatDateTime(doc.tanggal)}</div>
+      <div className="text-gray-600">Dokter: {doc.dokter}</div>
+      <div className="border-t pt-1 mt-1 text-gray-700 whitespace-pre-wrap">{doc.content}</div>
+    </div>
+  );
+}
+
+// ─── Doc Form Modal ──────────────────────────────────────────────────────────
+
+interface DocFormModalProps {
+  docType: DocType;
+  patient: PatientRow;
+  editingDoc: RMEDocument | null;
+  onSave: (doc: RMEDocument) => void;
+  onClose: () => void;
+}
+
+function DocFormModal({ docType, patient, editingDoc, onSave, onClose }: DocFormModalProps) {
+  const isCPPT = docType === 'cppt';
+  const isEdit = !!editingDoc;
+
+  // Parse existing CPPT content
+  const existingCPPT = useMemo(() => {
+    if (isCPPT && editingDoc) {
+      try { return JSON.parse(editingDoc.content); } catch { return {}; }
+    }
+    return {};
+  }, [isCPPT, editingDoc]);
+
+  const [tanggal, setTanggal] = useState(editingDoc?.tanggal?.slice(0, 16) || new Date().toISOString().slice(0, 16));
+  const [poli, setPoli] = useState(editingDoc?.poli || POLI_OPTIONS[0]);
+  const [dokter, setDokter] = useState(editingDoc?.dokter || DOKTER_OPTIONS[0]);
+
+  // CPPT fields
+  const [subjective, setSubjective] = useState(existingCPPT.subjective || '');
+  const [objective, setObjective] = useState(existingCPPT.objective || '');
+  const [assessment, setAssessment] = useState(existingCPPT.assessment || '');
+  const [plan, setPlan] = useState(existingCPPT.plan || '');
+  const [instruksi, setInstruksi] = useState(existingCPPT.instruksi || '');
+
+  // Generic fields
+  const [content, setContent] = useState(editingDoc && !isCPPT ? editingDoc.content : '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    let finalContent = content;
+    if (isCPPT) {
+      finalContent = JSON.stringify({ subjective, objective, assessment, plan, instruksi });
+    }
+
+    const doc: RMEDocument = {
+      id: editingDoc?.id || generateId(),
+      patientRM: patient.noRM,
+      patientName: patient.nama,
+      docType,
+      tanggal,
+      poli,
+      dokter,
+      user: 'admin',
+      content: finalContent,
+    };
+    onSave(doc);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-auto">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="text-sm font-semibold">
+            {isEdit ? 'Edit' : 'Tambah'} {DOC_TYPE_LABELS[docType]}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-gray-500">Tanggal</label>
+              <input
+                type="datetime-local"
+                className="w-full border rounded px-2 py-1 text-xs"
+                value={tanggal}
+                onChange={(e) => setTanggal(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500">Poli</label>
+              <select className="w-full border rounded px-2 py-1 text-xs" value={poli} onChange={(e) => setPoli(e.target.value)}>
+                {POLI_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">Dokter</label>
+            <select className="w-full border rounded px-2 py-1 text-xs" value={dokter} onChange={(e) => setDokter(e.target.value)}>
+              {DOKTER_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          {isCPPT ? (
+            <>
+              <div>
+                <label className="text-[10px] text-gray-500">Subjective (Keluhan Pasien)</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-xs h-16"
+                  value={subjective}
+                  onChange={(e) => setSubjective(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Objective (Pemeriksaan Fisik)</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-xs h-16"
+                  value={objective}
+                  onChange={(e) => setObjective(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Assessment (Diagnosa)</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-xs h-12"
+                  value={assessment}
+                  onChange={(e) => setAssessment(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Plan (Rencana Tindakan)</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-xs h-12"
+                  value={plan}
+                  onChange={(e) => setPlan(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">Instruksi</label>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-xs h-12"
+                  value={instruksi}
+                  onChange={(e) => setInstruksi(e.target.value)}
+                />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="text-[10px] text-gray-500">Isi / Catatan</label>
+              <textarea
+                className="w-full border rounded px-2 py-1 text-xs h-32"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                required
+              />
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50">
+              Batal
+            </button>
+            <button type="submit" className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+              {isEdit ? 'Simpan Perubahan' : 'Simpan'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Utils ───────────────────────────────────────────────────────────────────
+
+function calcAge(dob: string): string {
+  const birth = new Date(dob);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
+    age--;
+  }
+  return `${age} tahun`;
+}
